@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>危險綻放：精靈花坊 V2</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a2e; font-family: 'Noto Sans TC', sans-serif; user-select: none; }
+        canvas { display: block; margin: 0 auto; box-shadow: 0 0 20px rgba(0,0,0,0.5); cursor: crosshair; }
+        
+        /* UI Layers */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        
+        /* Panels */
+        .panel { background: rgba(20, 20, 30, 0.98); border: 2px solid #4a4e69; padding: 2rem; border-radius: 1rem; color: white; pointer-events: auto; text-align: center; max-width: 800px; width: 95%; box-shadow: 0 10px 30px rgba(0,0,0,0.8); display: flex; flex-direction: column; gap: 1rem; }
+        
+        /* Buttons */
+        .btn { background: linear-gradient(135deg, #6b46c1, #805ad5); color: white; padding: 0.75rem 1.5rem; border-radius: 0.5rem; font-weight: bold; cursor: pointer; transition: all 0.2s; border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .btn:hover { transform: translateY(-2px); filter: brightness(1.2); }
+        .btn:active { transform: translateY(1px); }
+        .btn:disabled { background: #4a5568; cursor: not-allowed; filter: grayscale(1); }
+        
+        .btn-green { background: linear-gradient(135deg, #2f855a, #38a169); }
+        .btn-red { background: linear-gradient(135deg, #c53030, #e53e3e); }
+        .btn-blue { background: linear-gradient(135deg, #3182ce, #4299e1); }
+        
+        /* HUD */
+        .hud-top { position: absolute; top: 0; left: 0; width: 100%; padding: 10px; display: flex; justify-content: space-between; pointer-events: none; box-sizing: border-box; }
+        .hud-box { background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 20px; color: white; border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(4px); }
+        .next-day-btn { pointer-events: auto; cursor: pointer; background: #e6fffa; color: #234e52; font-weight: bold; padding: 8px 20px; border-radius: 20px; border: 2px solid #38b2ac; transition: 0.2s; }
+        .next-day-btn:hover { background: #38b2ac; color: white; }
+
+        /* Card Selection */
+        .card-grid { display: grid; grid-template-cols: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; width: 100%; }
+        .card { background: rgba(255,255,255,0.05); border: 2px solid transparent; border-radius: 8px; padding: 10px; cursor: pointer; transition: 0.2s; position: relative; }
+        .card:hover { background: rgba(255,255,255,0.1); }
+        .card.selected { border-color: #f6e05e; background: rgba(246, 224, 94, 0.1); }
+        .card-icon { font-size: 2rem; margin-bottom: 0.5rem; display: block; }
+        .card-title { font-weight: bold; display: block; margin-bottom: 4px; font-size: 0.9rem; }
+        .card-desc { font-size: 0.75rem; color: #a0aec0; display: block; line-height: 1.2; }
+
+        /* Health Bar */
+        .hp-container { width: 200px; height: 16px; background: #2d3748; border-radius: 8px; overflow: hidden; border: 2px solid #fff; }
+        .hp-fill { height: 100%; background: #e53e3e; width: 100%; transition: width 0.2s; }
+
+        /* Interaction Tooltip */
+        #cursor-tooltip { position: absolute; pointer-events: none; background: rgba(0,0,0,0.8); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; display: none; z-index: 10; transform: translate(15px, 15px); border: 1px solid rgba(255,255,255,0.3); }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+<div id="cursor-tooltip">操作提示</div>
+
+<!-- HUD (In Game) -->
+<div id="hud" class="hud-top" style="display:none;">
+    <div class="flex gap-4">
+        <div class="hud-box">💰 $<span id="hud-money">0</span></div>
+        <div class="hud-box">🎒 種子: <span id="hud-seeds">0</span>/5</div>
+        <div class="hud-box" id="hud-fert-box">🧪 肥料: <span id="hud-fert">無</span></div>
+    </div>
+    <div class="flex gap-4 items-center">
+        <div class="hp-container">
+            <div id="hp-bar" class="hp-fill"></div>
+        </div>
+        <button class="next-day-btn" onclick="finishDay()">🌙 結束這一天</button>
+    </div>
+</div>
+
+<!-- UI Layer -->
+<div id="ui-layer">
+    
+    <!-- 1. Start Screen -->
+    <div id="screen-start" class="panel">
+        <h1 class="text-5xl font-bold text-purple-300 tracking-wider">危險綻放 V2</h1>
+        <p class="text-gray-300 text-lg">精靈花坊經營模擬<br>更危險的彈幕，更精細的栽培</p>
+        <div class="mt-4">
+            <button class="btn btn-green text-xl" onclick="initGame()">開始新遊戲</button>
+        </div>
+    </div>
+
+    <!-- 2. Preparation (Morning) Screen -->
+    <div id="screen-prep" class="panel" style="display:none;">
+        <div class="flex justify-between items-center border-b border-gray-600 pb-2">
+            <h2 class="text-2xl font-bold text-yellow-300">🌞 早晨整備階段</h2>
+            <div class="text-xl">持有資金: <span id="prep-money" class="text-green-400 font-mono">$0</span></div>
+        </div>
+
+        <!-- Step 1: Select Seeds -->
+        <div class="text-left w-full">
+            <h3 class="text-lg font-bold text-purple-200 mb-2">1. 選擇攜帶種子 (上限 5 顆)</h3>
+            <div class="card-grid" id="seed-grid">
+                <!-- Generated by JS -->
+            </div>
+            <p class="text-right text-sm text-gray-400 mt-1">已選擇: <span id="seed-count">0</span>/5</p>
+        </div>
+
+        <!-- Step 2: Select Fertilizer -->
+        <div class="text-left w-full">
+            <h3 class="text-lg font-bold text-blue-200 mb-2">2. 選擇本回合肥料 (需有幼苗才可使用)</h3>
+            <div class="card-grid" id="fert-grid">
+                <!-- Generated by JS -->
+            </div>
+        </div>
+
+        <button class="btn w-full mt-4 text-lg" onclick="startDay()">進入花園 (開始回合)</button>
+    </div>
+
+    <!-- 3. Summary (Night) Screen -->
+    <div id="screen-summary" class="panel" style="display:none;">
+        <h2 class="text-3xl font-bold text-indigo-300">🌙 一天結束</h2>
+        <div class="bg-gray-800 p-4 rounded text-left">
+            <p>今日採收: <span id="sum-harvest" class="float-right text-yellow-300">0 朵</span></p>
+            <p>今日收入: <span id="sum-income" class="float-right text-green-400">$0</span></p>
+            <hr class="border-gray-600 my-2">
+            <p>現有資金: <span id="sum-total" class="float-right text-white font-bold">$0</span></p>
+        </div>
+        <button class="btn btn-blue" onclick="goToPrep()">準備下一天</button>
+    </div>
+
+    <!-- 4. Game Over -->
+    <div id="screen-gameover" class="panel" style="display:none;">
+        <h2 class="text-4xl font-bold text-red-500">🥀 經營失敗</h2>
+        <p class="text-xl">你在花園中倒下了...</p>
+        <p>最終資金: <span id="final-score" class="text-yellow-300">$0</span></p>
+        <button class="btn" onclick="location.reload()">重新開始</button>
+    </div>
+
+</div>
+
+<script>
+/* -------------------------------------------------------------------------- */
+/* Data & Config                                */
+/* -------------------------------------------------------------------------- */
+
+const SEED_TYPES = [
+    { id: 'sun', name: '太陽葵', price: 100, desc: '十字旋轉射擊', color: '#ecc94b', icon: '🌻' },
+    { id: 'rose', name: '血腥玫瑰', price: 150, desc: '環狀擴散衝擊', color: '#f56565', icon: '🌹' },
+    { id: 'ice', name: '冰霜蓮', price: 200, desc: '螺旋高速彈幕', color: '#63b3ed', icon: '❄️' },
+    { id: 'poison', name: '劇毒菇', price: 250, desc: '脈衝擴散波', color: '#9f7aea', icon: '🍄' },
+    { id: 'elec', name: '雷電草', price: 300, desc: '隨機方向火花', color: '#f6e05e', icon: '⚡' }
+];
+
+const FERT_TYPES = [
+    { id: 'none', name: '不攜帶', price: 0, desc: '省錢', mod: null, icon: '🚫' },
+    { id: 'qty', name: '增殖肥料', price: 500, desc: '彈幕數量UP / 價值UP', mod: 'quantity', icon: '🧪' },
+    { id: 'cd', name: '速效肥料', price: 500, desc: '攻擊間隔DOWN / 價值UP', mod: 'cooldown', icon: '⚡' },
+    { id: 'spd', name: '激化肥料', price: 500, desc: '彈幕速度UP / 價值UP', mod: 'speed', icon: '🔥' }
+];
+
+const GAME_CONFIG = {
+    plantRadius: 30, // 盆栽大小
+    waterRadius: 100, // 澆水判定圈 (較大)
+    interactRadius: 45, // 種植/施肥/採摘 判定圈 (較小，需靠近)
+    waterTimeNeeded: 600, // 10秒 (60fps * 10)
+    bulletLifetime: 300
+};
+
+/* -------------------------------------------------------------------------- */
+/* State Management                             */
+/* -------------------------------------------------------------------------- */
+
+let canvas, ctx;
+let gameState = 'MENU'; // MENU, PREP, PLAY, SUMMARY, GAMEOVER
+let money = 2000; // Starting money
+let dayCount = 1;
+
+// Persistent Garden State (Pots stay between days)
+let gardenPots = []; 
+
+// Daily Loadout
+let inventory = {
+    seeds: [], // Array of seed IDs
+    fertilizer: null // Fertilizer ID
+};
+
+// Runtime Variables
+let player;
+let bullets = [];
+let particles = [];
+let texts = [];
+let mouse = { x: 0, y: 0, down: false };
+let frameCount = 0;
+let dailyIncome = 0;
+let dailyHarvestCount = 0;
+
+/* -------------------------------------------------------------------------- */
+/* Core Systems                                 */
+/* -------------------------------------------------------------------------- */
+
+function initGame() {
+    canvas = document.getElementById('gameCanvas');
+    ctx = canvas.getContext('2d');
+    resize();
+    window.addEventListener('resize', resize);
+    
+    // Input
+    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keyup', e => keys[e.key] = false);
+    window.addEventListener('mousemove', e => {
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+        updateTooltip();
+    });
+    window.addEventListener('mousedown', () => {
+        mouse.down = true;
+        handleInteraction();
+    });
+    window.addEventListener('mouseup', () => mouse.down = false);
+
+    // Generate Map (Once)
+    generateMap();
+    money = 2000;
+    gardenPots.forEach(p => p.reset()); // Clear any old data
+    
+    goToPrep();
+    gameLoop();
+}
+
+function generateMap() {
+    gardenPots = [];
+    const potCount = 12; // Total spots
+    const minDist = 180; // Large spacing
+    const padding = 100;
+
+    for (let i = 0; i < 500; i++) { // Try 500 times to place pots
+        if (gardenPots.length >= potCount) break;
+        
+        let x = padding + Math.random() * (canvas.width - padding * 2);
+        let y = padding + Math.random() * (canvas.height - padding * 2);
+        
+        let valid = true;
+        for (let p of gardenPots) {
+            let d = Math.hypot(p.x - x, p.y - y);
+            if (d < minDist) {
+                valid = false;
+                break;
+            }
+        }
+        
+        if (valid) {
+            gardenPots.push(new Pot(x, y));
+        }
+    }
+}
+
+function goToPrep() {
+    gameState = 'PREP';
+    switchScreen('screen-prep');
+    updatePrepUI();
+    bullets = []; // Clear bullets from previous day
+    particles = [];
+}
+
+function startDay() {
+    // Validate
+    if (inventory.fertilizer === null) inventory.fertilizer = 'none';
+    
+    gameState = 'PLAY';
+    switchScreen(null); // Hide all panels
+    document.getElementById('hud').style.display = 'flex';
+    
+    // Reset Player
+    player = { x: canvas.width/2, y: canvas.height - 100, hp: 100, maxHp: 100, dashCd: 0, dashing: 0 };
+    dailyIncome = 0;
+    dailyHarvestCount = 0;
+    
+    updateHUD();
+}
+
+function finishDay() {
+    gameState = 'SUMMARY';
+    document.getElementById('hud').style.display = 'none';
+    switchScreen('screen-summary');
+    
+    document.getElementById('sum-harvest').innerText = `${dailyHarvestCount} 朵`;
+    document.getElementById('sum-income').innerText = `$${dailyIncome}`;
+    document.getElementById('sum-total').innerText = `$${money}`;
+    
+    dayCount++;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Game Entities                                */
+/* -------------------------------------------------------------------------- */
+
+class Pot {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.reset();
+    }
+
+    reset() {
+        this.stage = 0; // 0:Empty, 1:Seed, 2:Seedling(Watered), 3:Mature(Attacking)
+        this.seedType = null;
+        this.fertType = null;
+        this.waterProgress = 0;
+        this.attackTimer = 0;
+        this.angle = 0; // For rotating attacks
+    }
+
+    update() {
+        // Attack Logic (Stage 3 Only)
+        if (this.stage === 3) {
+            this.attackTimer--;
+            this.angle += 0.02; 
+            if (this.attackTimer <= 0) {
+                this.firePattern();
+                // Reset timer based on fertilizer
+                let baseCd = 100;
+                if (this.fertType === 'cd') baseCd = 60; // Fast fire
+                this.attackTimer = baseCd + Math.random() * 20;
+            }
+        }
+
+        // Water Logic (Stage 1 Only)
+        if (this.stage === 1) {
+            let d = Math.hypot(player.x - this.x, player.y - this.y);
+            if (d < GAME_CONFIG.waterRadius) {
+                this.waterProgress++;
+                if (this.waterProgress >= GAME_CONFIG.waterTimeNeeded) {
+                    this.stage = 2; // Become Seedling
+                    spawnParticles(this.x, this.y, 10, '#4fd1c5');
+                    addText(this.x, this.y - 40, "💧 已澆灌!", '#4fd1c5');
+                }
+            }
+        }
+    }
+
+    firePattern() {
+        const seed = SEED_TYPES.find(s => s.id === this.seedType);
+        const color = seed ? seed.color : '#fff';
+        let speed = 3;
+        if (this.fertType === 'spd') speed = 5;
+
+        let quantityMult = (this.fertType === 'qty') ? 2 : 1;
+
+        switch (this.seedType) {
+            case 'sun': // 十字旋轉
+                for(let i=0; i<4 * quantityMult; i++) {
+                    let a = this.angle + (Math.PI*2 / (4*quantityMult)) * i;
+                    spawnBullet(this.x, this.y, Math.cos(a)*speed, Math.sin(a)*speed, color);
+                }
+                break;
+            case 'rose': // 環狀擴散 (Nova)
+                let count = 8 * quantityMult;
+                for(let i=0; i<count; i++) {
+                    let a = (Math.PI*2 / count) * i;
+                    spawnBullet(this.x, this.y, Math.cos(a)*speed, Math.sin(a)*speed, color);
+                }
+                break;
+            case 'ice': // 螺旋 (Spiral)
+                // Shoots rapid single shots that rotate
+                spawnBullet(this.x, this.y, Math.cos(this.angle*3)*speed*1.5, Math.sin(this.angle*3)*speed*1.5, color);
+                if (this.fertType === 'qty') {
+                    spawnBullet(this.x, this.y, Math.cos(this.angle*3 + Math.PI)*speed*1.5, Math.sin(this.angle*3 + Math.PI)*speed*1.5, color);
+                }
+                this.attackTimer = 10; // Override CD for rapid fire
+                break;
+            case 'poison': // 脈衝 (Pulse) - Slow large bullets
+                let pSpeed = speed * 0.5;
+                let waves = quantityMult;
+                for(let w=0; w<waves; w++) {
+                    setTimeout(() => {
+                        for(let i=0; i<6; i++) {
+                            let a = (Math.PI*2/6)*i;
+                            spawnBullet(this.x, this.y, Math.cos(a)*pSpeed, Math.sin(a)*pSpeed, color, 8);
+                        }
+                    }, w * 200);
+                }
+                break;
+            case 'elec': // 隨機 (Random Sparks)
+                for(let i=0; i<5 * quantityMult; i++) {
+                    let a = Math.random() * Math.PI * 2;
+                    let s = speed * (0.8 + Math.random() * 0.4);
+                    spawnBullet(this.x, this.y, Math.cos(a)*s, Math.sin(a)*s, color);
+                }
+                break;
+            default: // Basic
+                spawnBullet(this.x, this.y, Math.cos(this.angle)*speed, Math.sin(this.angle)*speed, color);
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+
+        // Draw Pot Base
+        ctx.fillStyle = '#4a5568';
+        ctx.beginPath();
+        ctx.arc(0, 0, 20, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = '#2d3748';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Stage Visuals
+        if (this.stage === 0) {
+            // Empty
+            ctx.fillStyle = '#1a202c';
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI*2);
+            ctx.fill();
+        } 
+        else if (this.stage === 1) {
+            // Seed (Needs Water)
+            ctx.fillStyle = '#718096'; // Soil
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = '#ecc94b'; // Seed dot
+            ctx.beginPath();
+            ctx.arc(0, 0, 5, 0, Math.PI*2);
+            ctx.fill();
+
+            // Water Ring (Progress)
+            if (this.waterProgress > 0) {
+                ctx.beginPath();
+                ctx.arc(0, 0, 28, -Math.PI/2, -Math.PI/2 + (Math.PI*2 * (this.waterProgress/GAME_CONFIG.waterTimeNeeded)));
+                ctx.strokeStyle = '#4299e1';
+                ctx.lineWidth = 4;
+                ctx.stroke();
+            }
+            
+            // Water Radius Hint (Only if player is close)
+            let d = Math.hypot(player.x - this.x, player.y - this.y);
+            if (d < GAME_CONFIG.waterRadius + 50) {
+                ctx.beginPath();
+                ctx.arc(0, 0, GAME_CONFIG.waterRadius, 0, Math.PI*2);
+                ctx.strokeStyle = 'rgba(66, 153, 225, 0.2)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+        else if (this.stage === 2) {
+            // Seedling (Needs Fertilizer)
+            ctx.fillStyle = '#276749'; // Green Soil
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI*2);
+            ctx.fill();
+            // Sprout
+            ctx.strokeStyle = '#48bb78';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.quadraticCurveTo(5, -10, 10, -15);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.quadraticCurveTo(-5, -10, -10, -15);
+            ctx.stroke();
+        }
+        else if (this.stage === 3) {
+            // Mature Flower
+            const seed = SEED_TYPES.find(s => s.id === this.seedType);
+            ctx.fillStyle = seed ? seed.color : '#fff';
+            
+            // Draw petals based on rotation
+            ctx.rotate(this.angle * 0.5); 
+            for(let i=0; i<6; i++) {
+                ctx.beginPath();
+                ctx.rotate(Math.PI/3);
+                ctx.ellipse(0, 12, 6, 12, 0, 0, Math.PI*2);
+                ctx.fill();
+            }
+            // Center
+            ctx.beginPath();
+            ctx.arc(0, 0, 8, 0, Math.PI*2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+        }
+
+        ctx.restore();
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Input Logic                                  */
+/* -------------------------------------------------------------------------- */
+
+let keys = {};
+
+function handleInteraction() {
+    if (gameState !== 'PLAY') return;
+
+    let closestPot = null;
+    let minD = 999;
+
+    // Find clicked pot
+    for (let p of gardenPots) {
+        let d = Math.hypot(mouse.x - p.x, mouse.y - p.y);
+        if (d < GAME_CONFIG.interactRadius) {
+            closestPot = p;
+            minD = d;
+            break;
+        }
+    }
+
+    if (!closestPot) return;
+
+    // Check player distance to pot (Must be close to interact)
+    let distPlayer = Math.hypot(player.x - closestPot.x, player.y - closestPot.y);
+    if (distPlayer > GAME_CONFIG.interactRadius + 20) {
+        addText(closestPot.x, closestPot.y, "太遠了!", "#fc8181");
+        return;
+    }
+
+    // Interaction Logic based on State
+    if (closestPot.stage === 0) {
+        // PLANT
+        if (inventory.seeds.length > 0) {
+            let seedId = inventory.seeds.shift();
+            closestPot.seedType = seedId;
+            closestPot.stage = 1;
+            closestPot.waterProgress = 0;
+            spawnParticles(closestPot.x, closestPot.y, 8, '#ecc94b');
+            addText(closestPot.x, closestPot.y - 30, "種植!", "#fff");
+            updateHUD();
+        } else {
+            addText(closestPot.x, closestPot.y - 30, "沒種子了!", "#fc8181");
+        }
+    }
+    else if (closestPot.stage === 2) {
+        // FERTILIZE
+        if (inventory.fertilizer) {
+            closestPot.fertType = inventory.fertilizer;
+            closestPot.stage = 3;
+            closestPot.attackTimer = 60; // Start attacking soon
+            spawnParticles(closestPot.x, closestPot.y, 20, '#f687b3');
+            addText(closestPot.x, closestPot.y - 30, "施肥完成!", "#f687b3");
+            // Remove fert? Logic says "Select which fertilizer to use", implies infinite from bag or one bag. 
+            // Prompt: "Select fertilizer... prerequisite is successfully watered flowers".
+            // Let's assume the bag lasts for the whole day.
+        }
+    }
+    else if (closestPot.stage === 3) {
+        // HARVEST
+        let seed = SEED_TYPES.find(s => s.id === closestPot.seedType);
+        let baseVal = seed.price * 2; // Sell price
+        
+        // Fert Multiplier
+        let fert = FERT_TYPES.find(f => f.id === closestPot.fertType);
+        if (fert && fert.id !== 'none') baseVal *= 1.5;
+
+        money += baseVal;
+        dailyIncome += baseVal;
+        dailyHarvestCount++;
+        
+        spawnParticles(closestPot.x, closestPot.y, 15, '#ffd700');
+        addText(closestPot.x, closestPot.y - 40, `+$${baseVal}`, '#ffd700');
+        
+        closestPot.reset(); // Empty the pot
+        updateHUD();
+    }
+}
+
+function updateTooltip() {
+    const tt = document.getElementById('cursor-tooltip');
+    if (gameState !== 'PLAY') {
+        tt.style.display = 'none';
+        return;
+    }
+
+    let hoveredPot = null;
+    for (let p of gardenPots) {
+        let d = Math.hypot(mouse.x - p.x, mouse.y - p.y);
+        if (d < GAME_CONFIG.interactRadius) {
+            hoveredPot = p;
+            break;
+        }
+    }
+
+    if (hoveredPot) {
+        tt.style.display = 'block';
+        tt.style.left = mouse.x + 'px';
+        tt.style.top = mouse.y + 'px';
+        
+        if (hoveredPot.stage === 0) tt.innerText = inventory.seeds.length > 0 ? "點擊種植" : "沒種子了";
+        else if (hoveredPot.stage === 1) tt.innerText = "需靠近澆水 (持續10秒)";
+        else if (hoveredPot.stage === 2) tt.innerText = "點擊施肥 (使其開花)";
+        else if (hoveredPot.stage === 3) tt.innerText = "點擊採收!";
+    } else {
+        tt.style.display = 'none';
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Game Loop                                    */
+/* -------------------------------------------------------------------------- */
+
+function spawnBullet(x, y, vx, vy, color, r=5) {
+    bullets.push({x, y, vx, vy, color, r, life: GAME_CONFIG.bulletLifetime});
+}
+
+function spawnParticles(x, y, count, color) {
+    for(let i=0; i<count; i++) {
+        particles.push({
+            x, y, 
+            vx: (Math.random()-0.5)*5, 
+            vy: (Math.random()-0.5)*5, 
+            color, life: 1.0
+        });
+    }
+}
+
+function addText(x, y, str, color) {
+    texts.push({x, y, str, color, life: 1.0});
+}
+
+function gameLoop() {
+    requestAnimationFrame(gameLoop);
+    frameCount++;
+
+    // Clear
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Grid
+    ctx.strokeStyle = '#2d3748';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < canvas.width; i += 100) { ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); }
+    for (let i = 0; i < canvas.height; i += 100) { ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); }
+    ctx.stroke();
+
+    if (gameState === 'PLAY') {
+        // Player Logic
+        let moveSpeed = 4;
+        if (keys[' ']) {
+            if (player.dashCd <= 0) {
+                player.dashing = 10;
+                player.dashCd = 60;
+            }
+        }
+        if (player.dashing > 0) {
+            moveSpeed = 12;
+            player.dashing--;
+        }
+        if (player.dashCd > 0) player.dashCd--;
+
+        let dx = 0, dy = 0;
+        if (keys['w'] || keys['ArrowUp']) dy = -1;
+        if (keys['s'] || keys['ArrowDown']) dy = 1;
+        if (keys['a'] || keys['ArrowLeft']) dx = -1;
+        if (keys['d'] || keys['ArrowRight']) dx = 1;
+        
+        // Normalize
+        if (dx!==0 || dy!==0) {
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            dx/=dist; dy/=dist;
+            player.x += dx * moveSpeed;
+            player.y += dy * moveSpeed;
+        }
+
+        // Clamp
+        player.x = Math.max(10, Math.min(canvas.width-10, player.x));
+        player.y = Math.max(10, Math.min(canvas.height-10, player.y));
+
+        // Update Entities
+        gardenPots.forEach(p => { p.update(); p.draw(); });
+
+        // Bullets
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            let b = bullets[i];
+            b.x += b.vx;
+            b.y += b.vy;
+            b.life--;
+            
+            // Draw
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+            ctx.fillStyle = b.color;
+            ctx.fill();
+
+            // Collision
+            let pd = Math.hypot(b.x - player.x, b.y - player.y);
+            if (pd < 10 + b.r && player.dashing <= 0) {
+                player.hp -= 5;
+                updateHUD();
+                document.getElementById('hp-bar').parentElement.classList.add('shake');
+                setTimeout(()=>document.getElementById('hp-bar').parentElement.classList.remove('shake'), 200);
+                bullets.splice(i, 1);
+                if (player.hp <= 0) {
+                    gameState = 'GAMEOVER';
+                    switchScreen('screen-gameover');
+                    document.getElementById('final-score').innerText = `$${money}`;
+                    document.getElementById('hud').style.display = 'none';
+                }
+                continue;
+            }
+
+            if (b.life <= 0 || b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+                bullets.splice(i, 1);
+            }
+        }
+
+        // Particles
+        particles.forEach((p, i) => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= 0.05;
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+            if(p.life <= 0) particles.splice(i, 1);
+        });
+
+        // Floating Text
+        texts.forEach((t, i) => {
+            t.y -= 1;
+            t.life -= 0.02;
+            ctx.globalAlpha = t.life;
+            ctx.font = 'bold 16px Arial';
+            ctx.fillStyle = t.color;
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 2;
+            ctx.strokeText(t.str, t.x, t.y);
+            ctx.fillText(t.str, t.x, t.y);
+            ctx.globalAlpha = 1.0;
+            if(t.life <= 0) texts.splice(i, 1);
+        });
+
+        // Draw Player
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.fillStyle = player.dashing > 0 ? '#fff' : '#4fd1c5';
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        // Dash Range (Visual)
+        if (player.dashCd <= 0) {
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI*2);
+            ctx.stroke();
+        }
+        ctx.restore();
+
+    } else if (gameState === 'PREP') {
+        // Just draw pots in background
+        gardenPots.forEach(p => p.draw());
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/* UI Functions                                 */
+/* -------------------------------------------------------------------------- */
+
+function switchScreen(id) {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    if (id) document.getElementById(id).style.display = 'flex';
+}
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+
+function updateHUD() {
+    document.getElementById('hud-money').innerText = money;
+    document.getElementById('hud-seeds').innerText = inventory.seeds.length;
+    let f = FERT_TYPES.find(x => x.id === inventory.fertilizer);
+    document.getElementById('hud-fert').innerText = f ? f.name : '無';
+    
+    // HP
+    let pct = (player.hp / player.maxHp) * 100;
+    document.getElementById('hp-bar').style.width = pct + '%';
+}
+
+function updatePrepUI() {
+    document.getElementById('prep-money').innerText = '$' + money;
+    inventory.seeds = [];
+    inventory.fertilizer = null;
+    renderSeedCards();
+    renderFertCards();
+    document.getElementById('seed-count').innerText = 0;
+}
+
+function renderSeedCards() {
+    const grid = document.getElementById('seed-grid');
+    grid.innerHTML = '';
+    SEED_TYPES.forEach(seed => {
+        const div = document.createElement('div');
+        div.className = 'card';
+        div.innerHTML = `
+            <span class="card-icon" style="color:${seed.color}">${seed.icon}</span>
+            <span class="card-title text-white">${seed.name}</span>
+            <span class="card-desc">價格: $${seed.price}</span>
+            <span class="card-desc text-yellow-200">${seed.desc}</span>
+        `;
+        div.onclick = () => toggleSeed(seed.id, seed.price, div);
+        grid.appendChild(div);
+    });
+}
+
+function renderFertCards() {
+    const grid = document.getElementById('fert-grid');
+    grid.innerHTML = '';
+    FERT_TYPES.forEach(fert => {
+        const div = document.createElement('div');
+        div.className = 'card';
+        div.innerHTML = `
+            <span class="card-icon">${fert.icon}</span>
+            <span class="card-title text-white">${fert.name}</span>
+            <span class="card-desc">價格: $${fert.price}</span>
+            <span class="card-desc text-blue-200">${fert.desc}</span>
+        `;
+        div.onclick = () => selectFert(fert.id, fert.price, div);
+        grid.appendChild(div);
+    });
+}
+
+function toggleSeed(id, price, el) {
+    // Count existing of this type
+    const countInInv = inventory.seeds.filter(s => s === id).length;
+    
+    if (inventory.seeds.length < 5 && money >= price) {
+        // Buy
+        money -= price;
+        inventory.seeds.push(id);
+        
+        // Visual flash
+        el.style.borderColor = '#48bb78';
+        setTimeout(() => el.style.borderColor = 'transparent', 200);
+    } else if (inventory.seeds.length >= 5) {
+        alert("背包滿了 (最多5顆)");
+    } else {
+        alert("沒錢了");
+    }
+    
+    document.getElementById('prep-money').innerText = '$' + money;
+    document.getElementById('seed-count').innerText = inventory.seeds.length;
+}
+
+function selectFert(id, price, el) {
+    // Refund previous selection
+    if (inventory.fertilizer) {
+        let old = FERT_TYPES.find(f => f.id === inventory.fertilizer);
+        if (old) money += old.price;
+    }
+    
+    if (money >= price) {
+        money -= price;
+        inventory.fertilizer = id;
+        
+        // UI Update
+        document.querySelectorAll('#fert-grid .card').forEach(c => c.classList.remove('selected'));
+        el.classList.add('selected');
+    } else {
+        alert("沒錢了");
+        // Re-select none if fail? No, just keep previous or null
+    }
+    document.getElementById('prep-money').innerText = '$' + money;
+}
+
+</script>
+</body>
+</html>
